@@ -1,2 +1,2 @@
-hypersonicvehicle
+hypersonicsimulation
 numpy >= 1.12.1
