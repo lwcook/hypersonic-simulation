@@ -1,6 +1,6 @@
 Integrated testing with Travis-CI: [![Build Status](https://travis-ci.org/lwcook/hypersonic-simulation.svg?branch=master)](https://travis-ci.org/lwcook/hypersonice-simulation.svg?branch=master)
 
-Horsetail matching is an method for optimization under uncertainty. This is a python package that implements the method.
+**Hypersonic Simulation**
 
 *For more information, please visit https://www-edc.eng.cam.ac.uk/aerotools/hypersonicsimulation*
 

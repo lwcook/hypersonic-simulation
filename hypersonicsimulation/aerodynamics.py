@@ -1,91 +1,42 @@
 #!/usr/bin/env python
+from __future__ import division
+import pdb
 import numpy as np
 import geometry
-import math
 
-class analysis_results:
-    """Class to use a structure for analyses results"""
+from math import sin, cos, asin, exp, pi, atan, tan, log
+from numpy import sqrt
+
+
+class AeroModel(object):
+    '''Class for the forces on an aerodynamic geometry'''
+
     def __init__(self):
-        out = []
 
-class aero_model:
-    """Class for the forces on an aerodynamic geometry)"""
+        self.geometry = None
 
-    def __init__(self, aero_geom = geometry.geom()):
-        lift = 0
-        drag = 0
-        moment = 0
-        self.geom = aero_geom # The geometry to be analyzed in here
-        self.atmosphere = atmosphere_model() # The free stream properties
-        self.atmosphere.evaluate_props(0)
+        self.T0 = 288.15 # Temperature in
+        self.p0 = 101325 # pressure in Pascals
+        self.rho0 = 1.225 # density in kg/m^2
+        self.a0 = 340.3 # speed of sound in m/s
+#        self.g0 = 9.80665 # acceleration due to gravity m/s^2
+#        self.rE = 6378137 # Earth's mean radius at the equator
+        self.R = 287.058
+        self.gamma = 1.4
 
+    def addGeometry(self, geometry):
+        self.geometry = geometry
 
-    def aero_analysis(self):
-        nlines = int(self.geom.x.shape[0])
-        nstrips = nlines - 1 # Number of strips
-        npoints = int(self.geom.x.shape[1]) 
-        npanels = npoints -1 # Number of panels per strip
-
-        for ii in range(nlines):
-            xs, ys, zs = self.geom.x[ii,:], self.geom.y[ii,:], self.geom.z[ii,:]
-            strip_results = self.strip_analysis(xs,ys,zs)
-
+    def run(self):
+        pass
 
     def strip_analysis(self, xstrip, ystrip, zstrip):
         pass
 
-    def tangent_cone(self, MachIn = 2.0, theta = 0.0):
-        M1 = MachIn
-        p1 = self.atmosphere.p
-        gam = self.atmosphere.gamma
-        temp1 = math.sin(theta)*math.sqrt(((gam+1)/2) +
-                (M1*math.sin(theta))**(-2))
-        beta = math.asin( temp1 )
+    def getAtmosphericProperties(self, altitude):
 
-        M1norm = M1*math.sin(beta)
+        fs_props = {}
 
-        temp1 = (math.cos(beta)**2)*(1 + 2*(beta-theta))
-        temp2 = 1 + ((gam-1)/2) * M1**2 * (math.sin(beta)**2 -
-                2*(beta-theta)**2 *math.cos(theta))**2 
-
-        M2 = math.sqrt( M1**2 * temp1/temp2 )
-
-        print beta*180/math.pi
-        print M2
-
-        p2 = p1*(1 + (2*gam/(gam+1))*(M1norm**2-1) )
-
-    def tangent_wedge(self, MachIn = 2.0, theta = 0.0):
-        M1 = MachIn
-        p1 = self.atmosphere.p
-        gam = self.atmosphere.gamma
-
-
-
-
-
-
-
-
-class atmosphere_model:
-    """ Class for evaluating free stream properties in the atmosphere"""
-
-    # Class variables
-    # Properties at sea level
-    T0 = 288.15 # Temperature in
-    p0 = 101325 # pressure in Pascals
-    rho0 = 1.225 # density in kg/m^2
-    a0 = 340.3 # speed of sound in m/s
-    g0 = 9.80665 # acceleration due to gravity m/s^2
-    rE = 6378137 # Earth's mean radius at the equator
-
-    def __init__(self):
-
-        self.R = 287.058
-        self.gamma = 1.4
-        self.evaluate_props(0) # Initialize properties at sea level
-
-    def evaluate_props(self, altitude):
         hkm = altitude # in kilometres
         hm = hkm*1000 # in metres
         if hkm < 0 or hkm > 80 :
@@ -93,28 +44,115 @@ class atmosphere_model:
             return
 
         if hkm <= 11:
-            self.T = self.T0 - 0.0065*hm
-            self.p = self.p0*(self.T/self.T0)**(5.2559)
+            fs_props['T'] = self.self.T0 - 0.0065*hm
+            fs_props['p'] = self.self.p0*(fs_props['T']/self.T0)**(5.2559)
         else:
-            self.T = 216
-            self.p = 22630*math.exp(-0.00015769*(hm-11000))
+            fs_props['T'] = 216
+            fs_props['p'] = 22630*exp(-0.00015769*(hm-11000))
 
-        self.rho = self.p/(self.R*self.T)
-        self.a = math.sqrt(self.gamma*self.R*self.T)
-        self.mu = self.sutherland_viscosity(self.T)
+        fs_props['rho'] = fs_props['p']/(self.R*fs_props['T'])
+#        fs_props['a'] = sqrt(self.gamma*self.R*fs_props['T'])
+#        fs_props['mu'] = self.sutherland_viscosity(fs_props['T'])
 
-    def sutherland_viscosity(self,T = 298):
+        return fs_props['p'], fs_props['T'], fs_props['rho']
+
+    def getSutherlandViscosity(self, T=298):
         mu0 = 1.827*10**-5
         T0 = 291.15
-        C = 120 # Sutherland's constant
-
-        mu = mu0*((T0 + C)/(T + C))*(T/T0)**(3/2)
-
+        C = 120. # Sutherland's constant
+        mu = mu0*((T0 + C)/(T + C))*(T/T0)**(3./2)
         return mu
 
+    def tangentCone(self, M_fs, p_fs, T_fs, rho_fs, theta):
+        '''Flow across an conical shock wave giving surface properties.
 
+        Using Rasmussen (1967) - this is an approximation for high Mach nubmers
+        and small cone angles.
+        For exact solutions, should solve the Taylor Maccoll (1933) equations
+        directly, which requires a numerical solution or a lookup table.
+        '''
+        g = self.gamma
+        a_fs = sqrt(g*self.R*T_fs)
+        th = theta
+        sinth = sin(th)
+        costh = cos(th)
+
+        beta = asin( sinth*sqrt(((g+1)/2) + (M_fs*sinth)**(-2)) )
+        b = beta
+        sinb = sin(b)
+        Msq = M_fs**2
+        cosb = cos(b)
+
+        M_norm = M_fs*sin(b)
+
+        __ = ( cosb**2*(1 + 2*(b-th)) ) / \
+                (1 + ((g-1)/2)*Msq*(sin(b)**2 - 2*(b-th)**2*costh**2) )
+        M = sqrt( Msq * __ )
+
+        p_other = p_fs*(1 + (2*g/(g+1))*(M_norm**2-1) )
+
+        __ = 1 + (((g+1)*Msq*sinth**2 + 2)/((g-1)*Msq*sinth**2 + 2))* \
+                log(((g+1)/2) + 1/(M_fs*sinth)**2)
+        Cp = __*sinth**2
+        p = Cp*0.5*rho_fs*(M_fs*a_fs)**2
+
+        T = T_fs*(( 1 + (2*g/g+1))*M_norm**2-1) * \
+                ( (2+(g-1)*M_norm**2)/((g+1)*M_norm**2) )
+
+        rho = rho_fs*((g+1)*M_norm**2)/(2+(g-1)*M_norm**2)
+        pdb.set_trace()
+
+        return M, p, T, rho, beta
+
+    def tangentWedge(self, M_fs, p_fs, T_fs, rho_fs, theta):
+        '''Flow solution across an obique shock wave.
+
+        Anderson. Fundamentals of Aerodynamics, 1991'''
+
+        ## Checked against shock tables - working
+
+        g = self.gamma
+        th = theta
+
+        beta = self.betaFromTM(th, M_fs)
+        M_norm = M_fs*sin(beta);
+
+        M = sqrt((1 + ((g-1)/2)*M_norm**2) / (g*M_norm**2 - (g-1)/2)) / \
+             sin(beta-th);
+
+        p = p_fs*(1 + (2*g/(g+1))*(M_norm**2 - 1))
+        rho = rho_fs*((g+1)*M_norm**2)/(2 + (g-1)*M_norm**2)
+        T = T_fs * (p/p_fs) * (rho_fs/rho);
+
+        return M, p, T, rho, beta
+
+
+    def betaFromTM(self, theta, M):
+        '''Obtains beta (radians) from theta (radians) and M in closed form.
+
+        Rudd and Lewis. Journal of Aircraft Vol. 35, No. 4, 1998'''
+
+        gam = self.gamma
+        n = 0  # weak shock
+        mu = asin(1/M)  # Mach wave angle
+        c = tan(mu)**2
+        a = (( gam-1)/2+(gam+1)*c/2)*tan(theta)
+        b = (( gam+1)/2+(gam+3)*c/2)*tan(theta)
+        d = sqrt(4*(1-3*a*b)**3/((27*a**2*c+9*a*b-2)**2)-1)
+
+        return atan((b+9*a*c)/(2*(1-3*a*b)) - \
+            (d*(27*a**2*c+9*a*b-2))/(6*a*(1-3*a*b)) * \
+            tan(n*pi/3+1/3*atan(1/d)))
+
+    def thetaFromBM(self, beta, M):
+        '''Obtains theta (radians) from beta (radians) and M in closed form.
+
+        Anderson. Fundamentals of Aerodynamics, 1991'''
+        g = self.gamma
+        __ = (M**2*sin(beta)**2 - 1) / (M**2*(g + cos(2*beta)) + 2)
+
+        return atan(2*(1./tan(beta))*__)
 
 
 if __name__ == "__main__":
-    a1 = aero_model()
-    a1.tangent_cone(3,0.175)
+    pass
