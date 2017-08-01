@@ -47,6 +47,16 @@ class Panel(object):
             return Panel(self.p1 - other, self.p2 - other,
                         self.p3 - other, self.p4 - other)
 
+    def getCentroid(self):
+        return 0.25*(self.p1 + self.p2 + self.p3 + self.p4)
+        ## improve this method
+
+    def _getTriangleCentroid(p1, p2, p3):
+        v1 = 0.5*(p2 + p3)
+        v2 = 0.5*(p1 + p3)
+        v3 = 0.5*(p1 + p2)
+        return 0
+
     def getAreaVector(self):
         return 0.5*np.cross((self.p3-self.p1), (self.p2-self.p4))
 
