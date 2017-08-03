@@ -6,6 +6,9 @@ from scipy.optimize import fsolve
 
 from geometry import Geometry, Strip, Panel
 
+import plotting
+import matplotlib.pyplot as plt
+
 from math import sin, cos, asin, exp, pi, atan, tan, log
 from numpy import sqrt
 
@@ -40,6 +43,7 @@ class AeroModel(object):
         self.p_fs, self.T_fs, self.rho_fs = \
             self.getAtmosphericProperties(altitude)
         self.M_fs = M
+        self.a_fs = sqrt(self.gamma*self.R*self.T_fs)
 
 
     def analyze_geometries(self, geoms):
@@ -55,7 +59,6 @@ class AeroModel(object):
             Lift += L
             Drag += D
             print 'Lift: ', L, '    Drag: ', D
-            pdb.set_trace()
 
         return Lift, Drag
 
@@ -66,9 +69,10 @@ class AeroModel(object):
         Lift = 0
         Drag = 0
         for strip in geom:
-            L, D = self.strip_analysis(strip)
+            L, D, strip_info = self.strip_analysis(strip, geom.tangent_method)
             Lift += L
             Drag += D
+        pdb.set_trace()
 
         return Lift, Drag
 
@@ -79,26 +83,32 @@ class AeroModel(object):
         plifts, flifts = np.zeros(len(strip)), np.zeros(len(strip))
         pdrags, fdrags = np.zeros(len(strip)), np.zeros(len(strip))
         M1, p1, T1, rho1, i1 = self.M_fs, self.p_fs, self.T_fs, self.rho_fs, 0.
+        pstrip, Mstrip = np.zeros(len(strip)), np.zeros(len(strip))
+        istrip, betastrip = np.zeros(len(strip)), np.zeros(len(strip))
+        sstrip, zstrip = np.zeros(len(strip)), np.zeros(len(strip))
 
+        in_shadow = None
+        turbulent_blayer = False
         for ip, panel in enumerate(strip):
 
+            ## Only work with non-zero area panels
             if panel.getArea() < 1e-8:
                 continue
 
             panel_location = np.dot(panel.getCentroid(), self.drag_nvec)
+            norm = panel.getNormalVector()
+            sign = np.sign(np.dot(norm, self.drag_nvec))
 
             ## Determine whether panel is in shadow
-            if ip == 0:
-                if np.dot(strip[0].getNormalVector(), self.drag_nvec) > 0:
+            if in_shadow is None:
+                if np.dot(norm, self.drag_nvec) > 0:
                     in_shadow = True
                 else:
                     in_shadow = False
-                turbulent_blayer = False
             else:
-                norm = panel.getNormalVector()
-                prev_norm = strip[ip-1].getNormalVector()
-                if (np.sign(np.dot(norm, self.drag_nvec)) !=
-                        np.sign(np.dot(prev_norm, self.drag_nvec))):
+                if sign == 0:
+                    sign = 1
+                if sign != prev_sign:
                     in_shadow = not in_shadow
 
             ## Uset tangent method or PM expansion to find local properties
@@ -112,7 +122,6 @@ class AeroModel(object):
                 print 'Norm: ', panel.getNormalVector()
                 print 'M, p, T, rho: ', M1, p1, T1, rho1
                 print ' '
-#                pdb.set_trace()
 
             if not in_shadow:
                 if abs(incidence) > 1e-6:
@@ -120,10 +129,11 @@ class AeroModel(object):
                         M, p, T, rho, beta = self.tangentWedge(incidence)
                     else:
                         M, p, T, rho, beta = self.tangentCone(incidence)
+                        Mw, pw, Tw, rhow, betaw = self.tangentWedge(incidence)
                 else:
                     M, p, T, rho, beta = M1, p1, T1, rho1, np.pi/2
             else:
-                del_inc = incidence - i1
+                del_inc = abs(incidence - i1)
                 M, p, T, rho = self.PMExpansion(del_inc, M1, p1, T1, rho1)
 
             ## Determine whether boundary layer transitions
@@ -133,23 +143,31 @@ class AeroModel(object):
                     turbulent_blayer = True
 
             ## Evaluate skin friction
-            tauw = self.referenceTempFriction(panel_location, M, p, T, rho,
+            tau = self.referenceTempFriction(panel_location, M, p, T, rho,
                     turbulent_blayer, tangent_method)
-
 
             ## Update previous panel's properties
             M1, p1, T1, rho1, i1 = M, p, T, rho, incidence
+            prev_norm, prev_sign = norm, sign
+
+            pstrip[ip], Mstrip[ip], istrip[ip] = p, M, incidence
+            sstrip[ip] = in_shadow
 
             ## Evaluate panel forces in format (lift, drag)
             plifts[ip] = p*(-1*panel.getAreaVector()).dot(self.lift_nvec)
             pdrags[ip] = p*(-1*panel.getAreaVector()).dot(self.drag_nvec)
-#            plifts[ip] = p*np.sin(incidence)
-#            pdrags[ip] = p*np.cos(incidence)
+            flifts[ip] = tau*(panel.getArea())*sin(incidence)
+            fdrags[ip] = tau*(panel.getArea())*cos(incidence)
+
+#        plotting.plot_geometry(Geometry([strip]))
+#        plt.show()
+#        pdb.set_trace()
 
         pLift, fLift = sum(plifts), sum(flifts)
         pDrag, fDrag = sum(pdrags), sum(fdrags)
+        info = {'Pressures': pstrip, 'Machs': Mstrip}
 
-        return pLift + fLift, pDrag + fDrag
+        return pLift + fLift, pDrag + fDrag, info
 
     def blayerTransition(self, M, p, T, rho):
         mu = sutherlandViscosity(T)
@@ -158,8 +176,33 @@ class AeroModel(object):
         return ReT*mu/(rho*M*np.sqrt(self.gamma*self.R*T))
 
     def referenceTempFriction(self, x, M, p, T, rho, turb, method):
+        g = self.gamma
         mu = sutherlandViscosity(T)
-        return 1
+        Re = M*np.sqrt(g*self.R*T)*rho*x / mu
+
+        if not turb:
+            Pr = 0.72
+            r = Pr**(1./2.)
+            Tw = T*(1 + r*((g-1)/2)*M**2)
+            Tref = T*(0.45 + 0.55*(Tw/T) + 0.16*r*((g-1)/2.)*M**2)
+        else:
+            Pr = 0.9
+            r = Pr**(1./3.)
+            Tw = T*(1 + r*((g-1)/2)*M**2)
+            Tref = T*(0.5 + 0.5*(Tw/T) + 0.16*r*((g-1)/2.)*M**2)
+
+        rhoref = p/(self.R*Tref)
+        muref = 1.458*1e-6 * Tref**(3./2)/(Tref + 110.4)
+        Reref = M*np.sqrt(g*self.R*Tref)*rhoref*x/muref
+
+        if not turb:
+            Cf = 0.664/np.sqrt(Reref)
+        else:
+            Cf = 0.02296/(Re**0.139) * (rhoref/rho)**0.861 * (muref/mu)**0.139
+
+        tau = Cf*0.5*self.rho_fs*(self.M_fs*self.a_fs)**2
+
+        return tau
 
     def getAtmosphericProperties(self, altitude):
 
@@ -190,18 +233,17 @@ class AeroModel(object):
             return M1, p1, T1, rho1
         else:
 
+            ## Prandtl Meyer function solving
             nu1 = prandtlMeyer(M1, self.gamma)
             nu2 = del_theta + nu1
             fun = lambda M: prandtlMeyer(M, self.gamma) - nu2
             fprime = lambda M: prandtlMeyerGradient(M, self.gamma)
 #            print fprime(M1)
 #            print (fun(M1+1e-6)-fun(M1))/1e-6
-#            pdb.set_trace()
-            M2 = float(fsolve(lambda M: prandtlMeyer(M, self.gamma) - nu2, M1))
             M2 = float(fsolve(fun, x0=M1, fprime=fprime))
             g = self.gamma
 
-            ### Isentropic expansion, from Anderson Section 9.6
+            ## Isentropic expansion, from Anderson Section 9.6
             T2 = T1*(1+((g-1)/2.)*M1**2)/(1+((g-1)/2.)*M2**2)
             p2 = p1*(T2/T1)**( g / (g-1) )
             rho2 = rho1*(T2/T1)**( 1/(g-1) )
@@ -222,7 +264,6 @@ class AeroModel(object):
         directly, which requires a numerical solution or a lookup table.
         '''
         g = self.gamma
-        self.a_fs = sqrt(g*self.R*self.T_fs)
         th = theta
         sinth = sin(th)
         costh = cos(th)
@@ -271,7 +312,7 @@ class AeroModel(object):
 
         p = self.p_fs*(1 + (2*g/(g+1))*(M_norm**2 - 1))
         rho = self.rho_fs*((g+1)*M_norm**2)/(2 + (g-1)*M_norm**2)
-        T = self.T_fs * (p/p_fs) * (rho_fs/rho);
+        T = self.T_fs * (p/self.p_fs) * (self.rho_fs/rho);
 
         return M, p, T, rho, beta
 

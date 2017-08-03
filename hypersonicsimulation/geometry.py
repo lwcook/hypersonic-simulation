@@ -65,7 +65,10 @@ class Panel(object):
 
     def getNormalVector(self):
         vec = self.getAreaVector()
-        return vec/np.linalg.norm(vec)
+        if np.linalg.norm(vec) > 1e-8:
+            return vec/np.linalg.norm(vec)
+        else:
+            return np.array([0, 0, 0])
 
     def getAngleWithVector(self, vector):
         norm_vec = self.getNormalVector()
@@ -101,8 +104,9 @@ class Geometry(list):
     The convention is that strips are listed clockwise looking from in front
     of the vehicle towards the leading edge. '''
 
-    def __init__(self, list_of_strips):
+    def __init__(self, list_of_strips, tangent_method='cone'):
         list.__init__(self, list_of_strips)
+        self.tangent_method = tangent_method
         for ii, strip in enumerate(list_of_strips[0:-1]):
             if type(strip) != Strip:
                 raise ValueError('Geometry must consist of a list of strips')

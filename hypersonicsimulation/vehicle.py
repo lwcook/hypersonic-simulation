@@ -15,8 +15,8 @@ class WingedConeVehicle(object):
     parts is negligible when using strip theory with the tangent cone methd.
     '''
 
-    def __init__(self, cylinder_R=1, cylinder_L=5, cone_L=7, boattail_L=1,
-            boattail_R=0.5, wing_span=3.5, wing_chord=1, wing_origin_L=2.5,
+    def __init__(self, cylinder_R=1, cylinder_L=4, cone_L=7, boattail_L=3,
+            boattail_R=0.7, wing_span=3.5, wing_chord=1, wing_origin_L=2.5,
             wing_finish_L=13, wing_thickness=0.3):
 
         ## Input Parameters
@@ -48,7 +48,7 @@ class WingedConeVehicle(object):
                                     Nlines=3, Npoints=3)
         self.tail = self.makeWing(self.tail_span, self.tail_chord,
                                     self.tail_origin_L, self.tail_finish_L,
-                                    self.tail_thickness, theta=np.pi)
+                                    self.tail_thickness, theta=0)
 
         self.geometries = [self.body, self.wing1, self.wing2, self.tail]
 #        self.geometries = [self.body, self.wing1, self.wing2]
@@ -73,9 +73,10 @@ class WingedConeVehicle(object):
                     (self.cylinder_R)/(self.cylinder_R - self.boattail_R))
 
         self.tail_span = 3
-        self.tail_origin_L = self.total_L-2
+        self.tail_origin_L = self.total_L-3
         self.tail_chord = (self.total_L - self.tail_origin_L)*0.25
         self.tail_finish_L = self.total_L
+        self.tail_chord_inner = self.tail_finish_L - self.tail_origin_L
         self.tail_thickness = self.wing_thickness*(
                     self.tail_chord/self.wing_chord)
 
@@ -160,7 +161,7 @@ class WingedConeVehicle(object):
                 y[il, ip] = -r*math.sin(theta)
                 z[il, ip] = r*math.cos(theta)
 
-        return Geometry(self.matricesToStrips(x, y, z))
+        return Geometry(self.matricesToStrips(x, y, z), tangent_method='cone')
 
     def makeBody(self, Nlines=21, Npoints=5):
         x = np.zeros([Nlines, 5])
@@ -186,29 +187,30 @@ class WingedConeVehicle(object):
             y[il, 3] = -self.boattail_R*math.sin(theta)
             z[il, 3] = self.boattail_R*math.cos(theta)
 
-            x[il, 4] = self.cone_L + self.cylinder_L + self.boattail_L
-            y[il, 4] = 0
-            z[il, 4] = 0
+#            x[il, 4] = self.cone_L + self.cylinder_L + self.boattail_L
+#            y[il, 4] = 0
+#            z[il, 4] = 0
 
         xmat = self._interpBody(x, Nlines, Npoints)
         ymat = self._interpBody(y, Nlines, Npoints)
         zmat = self._interpBody(z, Nlines, Npoints)
 
-        return Geometry(self.matricesToStrips(xmat, ymat, zmat))
+        return Geometry(self.matricesToStrips(xmat, ymat, zmat),
+                tangent_method='cone')
 
     def _interpBody(self, x, Nlines, Npoints):
         Np = Npoints
-        NpB = int(np.ceil(Npoints/2))
+        NpB = int(np.ceil(Npoints))
         NpC = int(np.ceil(Npoints*1.5))
-        xout = np.zeros([Nlines, NpC + Np + NpB + 1])
+        xout = np.zeros([Nlines, NpC + Np + NpB])
         for il in np.arange(Nlines):
             for ip in np.arange(NpC):
                 xout[il, 0+ip] = x[il, 0] + (x[il,1]-x[il,0])*(ip/NpC)
             for ip in np.arange(Np):
                 xout[il, NpC+ip] = x[il, 1] + (x[il, 2]-x[il,1])*(ip/Np)
             for ip in np.arange(NpB):
-                xout[il, NpC+Np+ip] = x[il, 2]+(x[il, 3]-x[il, 2])*(ip/NpB)
-            xout[il, -1] = x[il, 4]
+                xout[il, NpC+Np+ip] = x[il, 2]+(x[il, 3]-x[il, 2])*(ip/(NpB-1))
+#            xout[il, -1] = x[il, 4]
         return xout
 
     def makeWing(self, wing_span, wing_chord, wing_origin_L, wing_finish_L,
@@ -248,20 +250,32 @@ class WingedConeVehicle(object):
         x_outer[0] = min(w_o_L + wing_span/tanwing, wing_finish_L)
         z_outer[0] = wing_span
 
-        x_inner[1] = max(self.cone_L, x_inner[0])
-        z_inner[1] = self.cylinder_R
-        x_outer[1] = x_outer[0] + wing_chord/2.
-        z_outer[1] = wing_span
+        if x_inner[0] < self.cone_L:
+            x_inner[1] = self.cone_L
+            z_inner[1] = self.cylinder_R
+            x_outer[1] = x_outer[0] + wing_chord/2.
+            z_outer[1] = wing_span
+        else:
+            x_inner[1] = x_inner[0]
+            x_outer[1] = x_outer[0]
+            z_outer[1] = z_outer[0]
+            z_inner[1] = z_inner[0]
 
         x_inner[2] = w_o_L2 + w2_x
         z_inner[2] = w2_z
         x_outer[2] = x_outer[0] + wing_chord/2.
         z_outer[2] = wing_span
 
-        x_inner[3] = min(self.forebody_L, wing_finish_L)
-        z_inner[3] = self.cylinder_R
-        x_outer[3] = x_outer[0] + wing_chord/2.
-        z_outer[3] = wing_span
+        if x_inner[0] < min(self.forebody_L, wing_finish_L):
+            x_inner[3] = min(self.forebody_L, wing_finish_L)
+            z_inner[3] = self.cylinder_R
+            x_outer[3] = x_outer[0] + wing_chord/2.
+            z_outer[3] = wing_span
+        else:
+            x_inner[3] = x_inner[2]
+            x_outer[3] = x_outer[2]
+            z_outer[3] = z_outer[2]
+            z_inner[3] = z_inner[2]
 
         x_inner[4] = wing_finish_L
         z_inner[4] = self.cylinder_R - (wing_finish_L - self.forebody_L)/\
@@ -269,11 +283,12 @@ class WingedConeVehicle(object):
         x_outer[4] = wing_finish_L
         z_outer[4] = wing_span
 
-        inds = np.argsort(x_inner)
-        x_inner = x_inner[inds]
-        z_inner = z_inner[inds]
-        x_outer = x_outer[inds]
-        z_outer = z_outer[inds]
+#        inds1 = np.argsort(x_inner)
+#        x_inner = x_inner[inds1]
+#        z_inner = z_inner[inds1]
+#        inds2 = np.argsort(x_outer)
+#        x_outer = x_outer[inds2]
+#        z_outer = z_outer[inds2]
 
         x_upper = np.zeros([Nlines, 5])
         y_upper = np.zeros([Nlines, 5])
@@ -326,13 +341,14 @@ class WingedConeVehicle(object):
                 yrot[ii, jj] = outvec[1]
                 zrot[ii, jj] = outvec[2]
 
-        return Geometry(self.matricesToStrips(xrot, yrot, zrot))
+        return Geometry(self.matricesToStrips(xrot, yrot, zrot),
+                    tangent_method='wedge')
 
     def _interpWing(self, x, Nlines, Npoints):
         Np1 = Npoints
         Np2 = int(np.ceil(Npoints/2))
         Np3 = int(np.ceil(Npoints))
-        Np4 = int(np.ceil(Npoints))
+        Np4 = int(np.ceil(Npoints))+1
         xout = np.zeros([Nlines, Np1 + Np2 + Np3 + Np4])
         for il in np.arange(Nlines):
             for ip in np.arange(Np1):
@@ -346,7 +362,7 @@ class WingedConeVehicle(object):
                 xout[il, N] = x[il, 2]+(x[il, 3]-x[il, 2])*(ip/Np3)
             for ip in np.arange(Np4):
                 N = Np1+Np2+Np3+ip
-                xout[il, N] = x[il, 3]+(x[il, 4]-x[il, 3])*(ip/Np4)
+                xout[il, N] = x[il, 3]+(x[il, 4]-x[il, 3])*(ip/(Np4-1))
         return xout
 
     def getWingSection(self, xvec, zvec, wing_chord_inner, wing_chord,
