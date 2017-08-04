@@ -104,9 +104,10 @@ class Geometry(list):
     The convention is that strips are listed clockwise looking from in front
     of the vehicle towards the leading edge. '''
 
-    def __init__(self, list_of_strips, tangent_method='cone'):
+    def __init__(self, list_of_strips, tangent_method='cone', ref_area=1):
         list.__init__(self, list_of_strips)
         self.tangent_method = tangent_method
+        self.ref_area = ref_area
         for ii, strip in enumerate(list_of_strips[0:-1]):
             if type(strip) != Strip:
                 raise ValueError('Geometry must consist of a list of strips')

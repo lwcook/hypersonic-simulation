@@ -16,7 +16,7 @@ from numpy import sqrt
 class AeroModel(object):
     '''Class for the forces on an aerodynamic geometry'''
 
-    def __init__(self, altitude=20, M=8, alpha=0.0):
+    def __init__(self, altitude=20, M=8, alpha=0.0, dynamic_pressure=None):
 
         ## Sea level properties
         self.T0 = 288.15 # Temperature in
@@ -39,11 +39,22 @@ class AeroModel(object):
 
         assert(abs(np.dot(self.drag_nvec, self.lift_nvec)) < 1e-6)
 
+        if dynamic_pressure is not None:
+
+            def fun(h):
+                p, T, rho = self.getAtmosphericProperties(h)
+                a = np.sqrt(self.gamma*self.R*T)
+                q = 0.5*rho*(M*a)**2
+                return q - dynamic_pressure
+
+            altitude = fsolve(fun, x0=altitude)
+
         ## Free stream properties
         self.p_fs, self.T_fs, self.rho_fs = \
             self.getAtmosphericProperties(altitude)
         self.M_fs = M
         self.a_fs = sqrt(self.gamma*self.R*self.T_fs)
+        self.dynamic_pressure = 0.5*self.rho_fs*(self.M_fs*self.a_fs)**2
 
 
     def analyze_geometries(self, geoms):
@@ -62,7 +73,7 @@ class AeroModel(object):
 
         return Lift, Drag
 
-    def analyze_geometry(self, geom):
+    def analyze_geometry(self, geom, coeffs=False):
         if not type(geom) == Geometry:
             raise TypeError('Analyze requires instance of Geometry class')
 
@@ -72,9 +83,13 @@ class AeroModel(object):
             L, D, strip_info = self.strip_analysis(strip, geom.tangent_method)
             Lift += L
             Drag += D
-        pdb.set_trace()
 
-        return Lift, Drag
+        if coeffs:
+            Cl = Lift/(self.dynamic_pressure*geom.ref_area)
+            Cd = Drag/(self.dynamic_pressure*geom.ref_area)
+            return Cl, Cd
+        else:
+            return Lift, Drag
 
     def strip_analysis(self, strip, tangent_method='cone'):
         if not type(strip) == Strip:
@@ -130,6 +145,7 @@ class AeroModel(object):
                     else:
                         M, p, T, rho, beta = self.tangentCone(incidence)
                         Mw, pw, Tw, rhow, betaw = self.tangentWedge(incidence)
+#                        pdb.set_trace()
                 else:
                     M, p, T, rho, beta = M1, p1, T1, rho1, np.pi/2
             else:
